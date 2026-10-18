@@ -49,7 +49,7 @@ def check_history(initial, events, contract):
                 elif contract == "SNAP":
                     revision = event["revision"]
                     valid = (
-                        revision < len(revisions)
+                        0 <= revision < len(revisions)
                         and decision(revisions[revision], event["principal"], event["resource"])
                         == event["result"]
                     )
@@ -191,19 +191,23 @@ def generate(rng, count):
 def run_case(case, method):
     start = time.perf_counter()
     operations = case["operations"]
-    schedules = list(itertools.permutations(operations))
     if method == "random":
-        random.Random(case["id"]).shuffle(schedules)
-    elif method == "no_negative_cone":
-        schedules = [s for s in schedules if not any(e.get("relation") == "deny" for e in s)] or [
-            tuple(operations[::-1])
-        ]
-    elif method == "traceweaver":
-        schedules.sort(key=lambda seq: seq[0]["kind"] == "check")
+        rng = random.Random(case["id"])
+        schedules = (
+            tuple(rng.sample(operations, len(operations))) for _ in range(case["budget"])
+        )
+    elif method == "no_negative_cone" and any(e.get("relation") == "deny" for e in operations):
+        schedules = iter([tuple(operations[::-1])])
+    else:
+        ordered = (
+            sorted(operations, key=lambda event: event["kind"] == "check")
+            if method == "traceweaver" else operations
+        )
+        schedules = itertools.permutations(ordered)
     checked = 0
     inconclusive = 0
     visited = set()
-    for schedule in schedules[: case["budget"]]:
+    for schedule in itertools.islice(schedules, case["budget"]):
         if any(
             a["client"] == b["client"] and a["sequence"] > b["sequence"]
             for i, a in enumerate(schedule)
