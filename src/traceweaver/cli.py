@@ -63,13 +63,14 @@ def summarize(rows):
     return report
 
 
-def execute(cases, method, output):
+def execute(cases, method, output, target=None, engine="finite"):
     rows = []
     process = psutil.Process()
     for case in cases:
         start_cpu = time.process_time()
         start = time.perf_counter()
-        result = core.run_case(case, method)
+        result = core.run_case(case, method, target=target)
+        result["target_backend"] = engine
         elapsed = time.perf_counter() - start
         cpu = time.process_time() - start_cpu
         metrics = core.score(case, result)
@@ -153,6 +154,10 @@ def main():
         item = sub.add_parser(name)
         item.add_argument("--data", required=True)
         item.add_argument("--output", required=True)
+        item.add_argument("--engine", choices=["finite", "threads", "command"], default="finite")
+        item.add_argument("--overlap", type=int, default=2)
+        item.add_argument("--adapter-command", nargs="+")
+        item.add_argument("--adapter-timeout", type=float, default=60.)
         item.add_argument(
             "--methods",
             nargs="+",
@@ -171,9 +176,16 @@ def main():
             row["id"] = str(args.seed) + ":" + row["id"]
         write_jsonl(args.output, rows)
     elif args.command in ("run", "suite"):
+        from .runtime import command_target, threaded_target
+        if args.engine == "command" and not args.adapter_command:
+            parser.error("--engine command requires --adapter-command")
+        if args.overlap < 1 or args.adapter_timeout <= 0:
+            parser.error("overlap and adapter-timeout must be positive")
+        target = (threaded_target(args.overlap) if args.engine == "threads" else
+                  command_target(args.adapter_command, args.adapter_timeout) if args.engine == "command" else None)
         cases = read_jsonl(args.data)
         for method in args.methods:
-            execute(cases, method, Path(args.output) / method)
+            execute(cases, method, Path(args.output) / method, target, args.engine)
     else:
         plot(args.inputs, args.output)
 

@@ -24,6 +24,13 @@ def update(state, event):
 
 def check_history(initial, events, contract):
     operations = events[:]
+    if contract == "AT_LEAST" and any(
+        isinstance(e.get("min_revision", 0), bool)
+        or not isinstance(e.get("min_revision", 0), int)
+        or e.get("min_revision", 0) < 0
+        for e in operations if e["kind"] == "check"
+    ):
+        raise ValueError("Minimum revision must be a nonnegative integer")
     if len(operations) > 12:
         return "INCONCLUSIVE"
     real_edges = {
@@ -188,7 +195,7 @@ def generate(rng, count):
         }
 
 
-def run_case(case, method):
+def run_case(case, method, target=None):
     start = time.perf_counter()
     operations = case["operations"]
     if method == "random":
@@ -219,7 +226,7 @@ def run_case(case, method):
             if key in visited:
                 continue
             visited.add(key)
-        initial, history = simulate(case, schedule)
+        initial, history = (simulate if target is None else target)(case, schedule)
         verdict = check_history(
             initial, history, "LIN" if method == "forced_lin" else case["contract"]
         )
