@@ -171,11 +171,14 @@ def simulate(case, schedule):
             event["result"] = decision(observed, event["principal"], event["resource"])
             event["revision"] = 0 if stale else len(revisions) - 1
             event["min_revision"] = case.get("minimum_revision", 0)
-            event["requires"] = (
+            visibility_parents = (
                 []
                 if event["revision"] == 0
                 else [e["id"] for e in history if e["kind"] != "check"]
             )
+            event["requires"] = list(dict.fromkeys(
+                event.get("requires", []) + visibility_parents
+            ))
         else:
             state = update(state, event)
             revisions.append(copy.deepcopy(state))
@@ -185,6 +188,8 @@ def simulate(case, schedule):
 
 def independent(a, b, contract):
     if a["client"] == b["client"]:
+        return False
+    if a["id"] in b.get("requires", []) or b["id"] in a.get("requires", []):
         return False
     if contract != "LIN" and (a["kind"] != "check" or b["kind"] != "check"):
         return False

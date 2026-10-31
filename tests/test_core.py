@@ -34,6 +34,15 @@ def stale_history():
 
 
 class TraceWeaverTests(unittest.TestCase):
+    def test_stale_read_preserves_explicit_causality(self):
+        _, history = stale_history()
+        history[1]["requires"] = ["w"]
+        case = {"allow": [["u", "o"]], "deny": [], "mutant": "stale"}
+        _, observed = core.simulate(case, history)
+        self.assertEqual(observed[1]["requires"], ["w"])
+        other_resource = dict(history[1], resource="other")
+        self.assertFalse(core.independent(history[0], other_resource, "LIN"))
+
     def test_stale_lin_is_invalid_but_named_old_snapshot_is_valid(self):
         initial, history = stale_history()
         self.assertEqual(core.check_history(initial, history, "LIN"), "VIOLATION")

@@ -92,6 +92,10 @@ Validated locally: editable installation, syntax/import and regression checks, s
 
 Regression checks cover hand-computable rates and eligible denominators, the algorithm's safety boundary, and applicable replay/serialization paths. The documented small-data preparation, execution, suite, evaluation, statistics and plotting commands are the validation entry points. No complete training or large experimental campaign is required for these checks.
 
+Explicit causal parents are retained even when a stale read names revision zero;
+schedule reduction never swaps two calls joined by such an edge. The regression
+suite includes this previously lossy simulator boundary.
+
 The main checker bounds histories at 12 operations; the independent permutation cross-check bounds them at 8 and otherwise cannot confirm a finding. The built-in generator uses small allow/deny stale-read examples; it does not implement the full symbolic negative-cone/separating-state generator, Go/Porcupine stack, or native multi-engine campaign. The command example is a real local process running the reference threaded service. Local schedule-count smoke tests do not constitute a 300-second discovery campaign. Preserve censoring when analyzing discovery times.
 
 The source retains its existing MIT license. Data and external systems remain subject to their own licenses and access rules.
