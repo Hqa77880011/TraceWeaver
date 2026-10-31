@@ -5,6 +5,13 @@ from traceweaver.statistics import analyze
 
 
 class MetricTests(unittest.TestCase):
+    def test_discovery_survival_retains_undiscovered_families(self):
+        from traceweaver.survival import kaplan_meier
+
+        value = kaplan_meier([(1, True), (3, False)], horizon=3)
+        self.assertEqual(value["mean"], 2)
+        self.assertEqual(value["curve"][-1]["survival"], 0.5)
+
     def test_conditional_micro_rate_and_undefined_support(self):
         rows = [
             dict(id="a", metrics=dict(rate=0.5), metric_counts=dict(rate=[1, 2])),

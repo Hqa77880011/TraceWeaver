@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Contract-aware concurrency exploration for authorization histories implementation"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.24", "matplotlib>=3.7", "psutil>=5.9", "scipy>=1.11"]
+dependencies = ["numpy>=1.24", "matplotlib>=3.7", "psutil>=5.9", "scipy>=1.11", "z3-solver>=4.12"]
 
 [project.scripts]
 traceweaver = "traceweaver.cli:main"

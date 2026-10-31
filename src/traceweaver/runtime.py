@@ -8,11 +8,43 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .core import decision, update
+from .core import decision, update, initial_state
+from . import policy as relational
 
 
-def initial_state(case):
-    return {key: {tuple(atom) for atom in case[key]} for key in ("allow", "deny")}
+def concurrent_history(schedule, invoke, overlap=2):
+    """Run actual overlapping calls while preserving clients and declared parents."""
+    batches, current, clients = [], [], set()
+    for specification in schedule:
+        if (
+            len(current) >= overlap
+            or specification["client"] in clients
+            or any(
+                parent in {event["id"] for event in current}
+                for parent in specification.get("requires", [])
+            )
+        ):
+            batches.append(current)
+            current, clients = [], set()
+        current.append(specification)
+        clients.add(specification["client"])
+    if current:
+        batches.append(current)
+    clock, history = time.perf_counter_ns(), []
+
+    def call(specification, barrier):
+        start = time.perf_counter_ns() - clock
+        barrier.wait()
+        event = invoke(copy.deepcopy(specification))
+        event.update(start=start, end=time.perf_counter_ns() - clock)
+        return event
+
+    with ThreadPoolExecutor(max_workers=overlap) as executor:
+        for batch in batches:
+            barrier = threading.Barrier(len(batch))
+            futures = [executor.submit(call, event, barrier) for event in batch]
+            history.extend(future.result() for future in futures)
+    return history
 
 
 def command_target(command, timeout=60):
@@ -39,9 +71,32 @@ def command_target(command, timeout=60):
                 "Adapter must return each requested operation exactly once"
             )
         history = []
-        write_ids = {event["id"] for event in schedule if event["kind"] != "check"}
+        write_ids = {
+            event["id"]
+            for event in schedule
+            if event["kind"] not in ("check", "execute")
+        }
         for record in observed:
             event = copy.deepcopy(by_id[record["id"]])
+            if record.get("pending") or record.get("end") is None:
+                start = record.get("start")
+                if (
+                    type(start) not in (int, float)
+                    or not math.isfinite(start)
+                    or start < 0
+                ):
+                    raise ValueError(
+                        "Pending invocation requires its observed monotonic start"
+                    )
+                event.update(start=start, end=None, pending=True)
+                for key in ("result", "revision", "effect_committed", "error"):
+                    if key in record:
+                        event[key] = record[key]
+                event["requires"] = sorted(
+                    set(event.get("requires", [])) | set(record.get("requires", []))
+                )
+                history.append(event)
+                continue
             for key in ("start", "end"):
                 value = record[key]
                 if (
@@ -56,7 +111,11 @@ def command_target(command, timeout=60):
                 event[key] = value
             if event["end"] < event["start"]:
                 raise ValueError("Adapter response precedes its invocation")
-            if event["kind"] == "check":
+            if record.get("error") == "disabled":
+                event["error"] = "disabled"
+                history.append(event)
+                continue
+            if event["kind"] in ("check", "execute"):
                 if not isinstance(record["result"], bool):
                     raise ValueError("Adapter check result must be Boolean")
                 event["result"] = record["result"]
@@ -83,8 +142,10 @@ def command_target(command, timeout=60):
                     or minimum < 0
                 ):
                     raise ValueError("Minimum revision must be a nonnegative integer")
-                dependencies = set(record.get("requires", []))
-                if not dependencies <= write_ids:
+                dependencies = set(event.get("requires", [])) | set(
+                    record.get("requires", [])
+                )
+                if not dependencies <= set(by_id):
                     raise ValueError(
                         "Adapter dependencies must name writes in this case"
                     )
@@ -95,7 +156,11 @@ def command_target(command, timeout=60):
             history.append(event)
         ordered = sorted(history, key=lambda e: (e["client"], e["sequence"]))
         for first, second in zip(ordered, ordered[1:]):
-            if first["client"] == second["client"] and first["end"] > second["start"]:
+            if (
+                first["client"] == second["client"]
+                and first.get("end") is not None
+                and first["end"] > second["start"]
+            ):
                 raise ValueError("One client's sequential calls must not overlap")
         return initial_state(case), history
 
@@ -138,18 +203,46 @@ def threaded_target(overlap=2):
             # All invocations in this batch are visible before any response.
             barrier.wait()
             with lock:
-                if event["kind"] == "check":
+                if not relational.evaluate(event.get("enabled", True), state, event):
+                    event["error"] = "disabled"
+                elif event["kind"] == "execute":
+                    observed = (
+                        initial
+                        if case.get("mutant") == "stale"
+                        or event.get("gate") == "snapshot"
+                        else state
+                    )
+                    event["revision"] = 0 if observed is initial else len(writes)
+                    event["result"] = decision(
+                        observed,
+                        event["principal"],
+                        event["resource"],
+                        event.get("action", "read"),
+                        event.get("context", {}),
+                    ) and (
+                        case.get("mutant") == "duplicate_nonce"
+                        or event["nonce"] not in state["consumed"]
+                    )
+                    if event["result"]:
+                        state = update(state, event)
+                elif event["kind"] == "check":
                     stale = case.get("mutant") == "stale"
                     event["result"] = decision(
                         initial if stale else state,
                         event["principal"],
                         event["resource"],
+                        event.get("action", "read"),
+                        event.get("context", {}),
                     )
                     event["revision"] = 0 if stale else len(writes)
                     event["min_revision"] = event.get(
                         "min_revision", case.get("minimum_revision", 0)
                     )
-                    event["requires"] = [] if stale else list(writes)
+                    event["requires"] = list(
+                        dict.fromkeys(
+                            event.get("requires", []) + ([] if stale else list(writes))
+                        )
+                    )
                 else:
                     state = update(state, event)
                     writes.append(event["id"])
